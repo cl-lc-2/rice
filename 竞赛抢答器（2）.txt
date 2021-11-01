@@ -1,0 +1,365 @@
+ ;端口地址
+PORT_A      EQU    288H      ;8255A口地址
+PORT_B      EQU    289H      ;8255B口地址
+PORT_C      EQU    28AH      ;8255B口地址
+PORT_CTL    EQU    28BH     ;8255控制口地址
+
+PCH0  EQU  280H            ;8253通道0
+PCH1  EQU  281H            ;8253通道1
+PCH2  EQU  282H            ;8253通道2
+PCTL  EQU  283H             ;8253控制R
+
+
+
+;数据段，键盘扫描码表
+DATA SEGMENT
+;   0号和1号作为抢答，4号作为开始，5号作为复位
+;          0      1      2      3      4      5      6      7
+TABLE DB   77H,   7BH,   7DH,   7EH,  0B7H,  0BBH,  0BDH,  0BEH
+;          8      9      A      B      C      D      E      F
+      DB  0D7H,  0DBH,  0DDH,  0DEH,  0E7H,  0EBH,  0EDH,  0EEH
+
+HZ_TAB                DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B1H,0A3B0H,0C3EBH         ;共11行 显示效果  倒计时还有XX秒                
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B9H,0C3EBH         ;写入10行数据表示10秒倒计时
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B8H,0C3EBH         ;最后一行提示可以抢答
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B7H,0C3EBH
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B6H,0C3EBH
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B5H,0C3EBH
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B4H,0C3EBH
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B3H,0C3EBH
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B2H,0C3EBH
+                      DW  0B5B9H,0BCC6H,0CAB1H,0BBB9H,0D3D0H,0A3B0H,0A3B1H,0C3EBH                      
+                      DW  0BCC6H,0CAB1H,0BDE1H,0CAF8H,0BFAAH,0CABCH,0C7C0H,0B4F0H
+                                           
+EMPTY                 DW  0A1A0H,0A1A0H,0A1A0H,0A1A0H,0A1A0H,0A1A0H,0A1A0H,0A1A0H
+
+
+HZ_ADR         DB  00H                   ;存放显示行起始端口地址
+
+AN_TAB_0          DW 0A3B0H,0BAC5H,0CDE6H,0BCD2H,0C7C0H,0B4F0H,0B3C9H,0B9A6H         ;0号玩家抢答时 显示效果  0号玩家抢答成功               
+AN_TAB_1          DW 0A3B1H,0BAC5H,0CDE6H,0BCD2H,0C7C0H,0B4F0H,0B3C9H,0B9A6H       ;1号玩家抢答时 显示效果  1号玩家抢答成功   
+
+PRO_START   DB   0        ;判断计时结束标志
+
+DATA ENDS
+
+;代码段
+CODE SEGMENT
+ASSUME CS:CODE, DS:DATA
+START: 
+       MOV AX,DATA
+       MOV DS,AX                                      ;初始化8255A，方式0，B口作为输入，C口作为输出，A口作为输出
+       MOV DX,PORT_CTL                          ;指向控制口
+       MOV AL,10000010B                         ;控制字
+       OUT DX,AL                                                                                              
+       MOV DX, PORT_C                             ;用C口向所有行送0
+       MOV AL,00H
+       OUT DX,AL 
+
+;读列，查看是否所有键均松开
+       MOV DX,PORT_B
+WAIT_OPEN:IN AL,DX                   ;键盘状态读入B口
+       AND AL,0FH                          ;只查低四位（列值）
+       CMP AL,0FH                           ;是否都为1？（各键都松开？ ）
+       JNE WAIT_OPEN                    ;否，继续查
+
+;各键均已松开，再查列是否有0，即是否有键按下
+WAIT_PRES:IN AL,DX                   ;读B口
+        AND AL,0FH                        ;只查低四位
+        CMP AL,0FH                        ;是否有键按下
+        JE  WAIT_PRES                     ;无，等待
+
+;有键按下，延时20ms，消除抖动
+        MOV CX,16EAH
+DELAY:  LOOP DELAY                  ;延时20ms
+
+;再查列，看键是否仍被压着
+        IN  AL,DX
+        AND AL,0FH
+        CMP AL,0FH
+        JE  WAIT_PRES                     ;已松开，转出等待压键
+
+;键仍被压着，确定哪一个键被压下
+        MOV AL,0EFH                                   ;先使D0=0
+        MOV CL,AL                       ;CL=1110 1111B
+NEXT_ROW:MOV DX,PORT_C                   ;C口输出
+        OUT DX,AL                                        ;向一行输出低电平
+        MOV DX, PORT_B                          
+        IN  AL,DX                                          ;读入B口状态
+        AND AL,0FH                                      ;只截取列值
+        CMP AL,0FH                                      ;是否均为1？
+        JNE ENCODE                                     ;否，表示有键按下，转去编码
+        ROL CL ,01                                        ;均为1，使下行输出0
+        MOV AL,CL
+        JMP NEXT_ROW                                ;查看下行
+
+;已找到有一列为低电平，对压键的行列值进行编码
+ENCODE: MOV BX,0FH                            ;建立地址指针，先指向F键对应的地址
+        IN  AL,DX                                             ;从B口读入行列值
+NEXT_TRY:CMP AL,TABLE[BX]                      ;读入的行列值与表中查得的相等吗？
+        JE  DONE                                              ;相等，转出
+        DEC BX                                                 ;不等，转向下一个（键值较小者）地址
+        JNS NEXT_TRY                                      ;若地址尚未减为负值，继续查
+        MOV AH,01                                          ;若减为负值，置出错码01->AH中
+        JMP EXIT                                              ;退出
+
+DONE:   
+       
+        
+        CMP BX,00H               ;判断是否按下按键0
+        JE ANSWER_0             ;跳转至0号抢答
+        CMP BX,01H               ;判断是否按下按键1
+        JE ANSWER_1             ;跳转至1号抢答
+        CMP BX,04H               ;判断是否按下按键4
+        JE JISHI                       ;跳转至计时程序
+        CMP BX,05H               ;判断是否按下按键5
+        JE RESET                 ;跳转至复位程序        
+
+        MOV BX,500H                                  ;将500H存入BX中，用于双层循环延时
+DELAY1: MOV CX,12346                          ;将12356存入CX
+DELAY2: LOOP DELAY2                             ;循环DELAY2，每循环一次，CX自减一次
+        DEC BX                                          
+        JNZ DELAY1                                      ;若BX不为0，则跳至DELAY1
+        JMP  START                                       ;循环检测该程序 
+
+
+ANSWER_0:
+        MOV AL,PRO_START                ;根据PRO_START的值判断是否允许抢答
+        CMP AL,01H
+        JNZ G
+               
+        MOV AX,DATA
+        MOV DS,AX          
+        LEA BX,AN_TAB_0           ;获取显示数组起始地址     
+        MOV DX,PORT_CTL
+        MOV AL,80H
+        OUT DX,AL                     ;8255初始化
+
+        CALL CLEAR                    ;LCD 清除                                
+        CALL PL_DISP                 ;在第3行显示信息
+               
+        MOV BYTE PTR PRO_START,00H    ;设置PRO_START为0，阻止其他玩家抢答          
+G:      JMP RESET                     ;返回主程序
+        
+ANSWER_1:
+        MOV AL,PRO_START                ;根据PRO_START的值判断是否允许抢答
+        CMP AL,01H
+        JNZ F
+         
+        MOV AX,DATA
+        MOV DS,AX               
+        LEA BX,AN_TAB_1           ;获取显示数组起始地址 
+        MOV DX,PORT_CTL
+        MOV AL,80H
+        OUT DX,AL                     ;8255初始化
+
+        CALL CLEAR                    ;LCD 清除                               
+        CALL PL_DISP                ;在第3行显示信息            
+
+        MOV BYTE PTR PRO_START,00H       ;设置PRO_START为0，阻止其他玩家抢答          
+F:      JMP RESET               ;返回主程序
+      
+
+
+RESET:   
+       MOV BYTE PTR PRO_START,00H        ;设置计时结束标志为0                                
+       MOV AX,DATA
+       MOV DS,AX       
+       LEA BX,HZ_TAB            
+       MOV DX,PORT_CTL
+       MOV AL,80H
+       OUT DX,AL                     ;8255初始化 
+       
+       CALL CLEAR                    ;LCD 清除                             
+       CALL  LCD_DISP              ;在第2行显示信息         
+       
+       JMP START                      ;返回主程序
+
+       
+JISHI:  
+        
+        LEA BX,HZ_TAB
+        MOV AX,DATA
+        MOV DS,AX
+               
+        MOV CX,11
+               
+        MOV AL,00110101B        ;8253初始化，选择通道0，采用BCD计数方式
+	MOV DX,PCTL
+	OUT DX,AL
+
+	MOV AL,00H                  ;计数器初值均为10000，周期为5ms，先写低字节，后写高字节
+	MOV DX,PCH0
+	OUT DX,AL
+	OUT DX,AL
+
+	MOV AL,01110111B           ;8253初始化，选择通道1，采用BCD计数方式
+	MOV DX,PCTL
+	OUT DX,AL
+
+	MOV AL,00H                 ;计数器初值均为200，总周期为1s，先写低字节，后写高字节
+	MOV DX,PCH1
+        OUT DX,AL
+	MOV AL,02H
+        OUT DX,AL
+
+ S:     MOV DX, PORT_CTL
+        MOV AL,80H
+        OUT DX,AL                       ;8255初始化
+
+ 
+        CALL CLEAR              ;LCD 清除                         
+        CALL LCD_DISP
+
+        ;判断是否是下降沿（判0）
+        MOV DX,PORT_CTL
+        MOV AL,10000001B
+        OUT DX,AL
+XUN1:   MOV DX,PORT_C                ;从8255C口输入
+        IN AL,DX
+        TEST AL,08H                    ;测试8253是否为高电平
+        JNZ XUN1                     
+              
+;判断是否是上升沿（判1）
+XUN3:   MOV DX,PORT_C            ;从8255C口输入
+        IN AL,DX
+        TEST AL,08H               ;测试8253是否为高电平
+        JZ XUN3
+
+        ADD BX,10H
+        LOOP S
+        MOV BYTE PTR PRO_START,01H                ;设置计时结束标志为1
+        JMP START
+           
+
+CLEAR:
+
+                MOV AL,0CH
+                MOV DX, PORT_A
+                OUT DX,AL                   ;设置CLEAR命令
+                CALL CMD_SETUP          ;启动LCD执行命令
+                RET
+
+
+
+
+LCD_DISP:     
+                PUSH BX
+                PUSH CX
+                MOV BYTE PTR HZ_ADR,90H
+		    MOV CX,8
+c:              PUSH CX
+                MOV AL,HZ_ADR
+                MOV DX,PORT_A
+                OUT DX, AL
+
+                CALL CMD_SETUP          ;设定DDRAM地址命令
+                MOV AX,[BX]
+                PUSH AX
+                MOV AL,AH               ;先送汉字编码高位
+                MOV DX, PORT_A
+                OUT DX,AL
+                CALL DATA_SETUP         ;输出汉字编码高字节
+                CALL de                 ;延迟
+
+                POP AX
+                MOV DX, PORT_A
+                OUT DX, AL
+                CALL DATA_SETUP         ;输出汉字编码低字节
+                CALL de
+                INC BX
+                INC BX                              ;修改显示内码缓冲区指针
+                INC BYTE PTR HZ_ADR     ;修改LCD显示端口地址
+                POP CX
+                DEC CL
+                JNZ  c
+                POP CX
+                POP BX
+                RET
+
+
+PL_DISP:                          
+                MOV BYTE PTR HZ_ADR, 88H        ;第二行起始端口地址
+                MOV CL,8
+CON:            PUSH CX
+                MOV AL,HZ_ADR
+                MOV DX, PORT_A
+                OUT DX, AL
+
+                CALL CMD_SETUP          ;设定DDRAM地址命令
+                MOV AX,[BX]
+                PUSH AX
+                MOV AL,AH               ;先送汉字编码高位
+                MOV DX,PORT_A
+                OUT DX,AL
+                CALL DATA_SETUP         ;输出汉字编码高字节
+                CALL de              ;延迟
+
+                POP AX
+                MOV DX,PORT_A
+                OUT DX, AL
+                CALL DATA_SETUP         ;输出汉字编码低字节
+                CALL de
+                INC BX
+                INC BX                  ;修改显示内码缓冲区指针
+                INC BYTE PTR HZ_ADR     ;修改LCD显示端口地址
+                POP CX
+                DEC CL
+                JNZ  CON
+                RET
+
+
+
+CMD_SETUP:
+
+                MOV DX, PORT_C              ;指向8255端口控制端口
+                NOP
+                MOV AL,00000000B     ;PC1置0,pc0置0 （LCD I端=0，W端＝0）
+                OUT DX, AL
+                call de
+                NOP
+                MOV AL,00000100B         ;PC2置1 （LCD E端＝1）
+                OUT DX, AL
+                NOP
+                call de
+                MOV AL, 00000000B               ;PC2置0,（LCD E端置0）
+                OUT DX, AL
+                call de
+                RET
+
+
+
+DATA_SETUP:    
+
+                MOV DX,PORT_C              ;指向8255控制端口
+                MOV AL,00000001B            ;PC1置0，PC0=1 （LCD I端=1）
+                OUT DX, AL
+                NOP
+                call de
+                MOV AL,00000101B                ;PC2置1 （LCD E端＝1）
+                OUT DX, AL
+                NOP
+                call de
+                MOV AL, 00000001B               ;PC2置0,（LCD E端＝0）
+                OUT DX, AL
+                NOP
+                call de
+                RET
+
+
+
+de:
+                push cx
+                push dx
+                MOV CX, 0ffffh
+ x1:            loop   x1
+                pop dx
+                pop cx
+                RET
+
+
+  
+EXIT:   HLT 
+
+CODE    ENDS
+END START
