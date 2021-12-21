@@ -1,7 +1,0 @@
-<resources>
-    <string name="app_name">QQ_login</string>
-    <string name="text_qq">QQ</string>
-    <string name="input_account">QQ号码/手机/邮箱</string>
-    <string name="input_password">密码</string>
-    <string name="login">登录</string>
-</resources>
